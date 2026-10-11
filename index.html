@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <style>
+            body {
+                margin: 0;
+                padding: 0;
+                background: #000;
+                font-size: 10px;
+                color: #fff;
+            }
+            #canvas {
+                position: absolute;
+                background: #333;
+            }
+        </style>
+        <meta charset="UTF-8">
+        <title>Final Defense Shot</title>
+    </head>
+    <body>
+        <div id="screen" style="width: 800px; height: 800px; margin: calc((100vh - 820px) / 2) auto; position: relative;">
+            <canvas id="canvas"></canvas>
+        </div>
+        <script>
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+const VERSION = "1.0.0";
+const FPS = 60;
+const MAP_SIZE = [800, 800];
+const MAP_BACKSIZE = 160;
+const MAP_LINE = [Math.round(MAP_SIZE[0] / MAP_BACKSIZE), Math.round(MAP_SIZE[1] / MAP_BACKSIZE)];
+const CROSSMOVE_MUL = 1 / Math.sqrt(2);
+const DESTROY_DISTANCE = 640;
+const SPREAD_DISTANCE = 5;
+const START_BULLET = 2;
+const ENEMY_SPON_MAX = 512;
+const ENEMY_SPON_RATE = 5;
+const ITEM_SPON_MAX = 128;
+const ITEM_SPON_RATE = 15;
+const HARDLEVEL_RATE_START = 720;
+const HARDLEVEL_RATE_END = 480;
+const EXP_REQUIRED_MUL = 1.005;
+const EXP_RATE_START = 72;
+const MASS_SOFT = 0;
+const MASS_HARD = 1;
+const MASS_PARTICLE = 2;
+const DIR_RIGHT = 1;
+const DIR_LEFT = -1;
+const DIR_UP = -2;
+const DIR_DOWN = 2;
+const DIR = [DIR_RIGHT, DIR_LEFT, DIR_UP, DIR_DOWN];
+const COLOR_BACK = "rgba(20, 20, 20, 1)";
+
+const STAT_BULLET = [
+    [5, 100, 1, [4, 4], 0, 120, 10, 0, 0, 16, 3, 10, 0, null, true, 0, [50, 115, 255], 0, 3.3],         //[0] 소총
+    [1.5, 12, 1, [1.5, 1.5], 0, 100, 8, 0, 0, 64, 0, null, 0, null, true, 0, [62, 255, 177], 0, 3.1],   //[1] 기관총
+    [25, 100, 1, [6, 6], 0, 150, 11, 0, 0, 0, 0, null, 2, 6, false, 0, [255, 153, 0], 99, 3.2],         //[2] 저격총
+    [2, 120, 1, [4.5, 4.5], 0, 100, 10, 0, 0, 96, 0, null, 0, null, false, 0, [255, 229, 62], 1, 3],    //[3] 산탄총
+    [50, 210, 1, [7.5, 7.5], 0, 100, 10, 0, 0, 0, 0, null, 0, null, false, 0, [158, 63, 255], 0, 3.2],  //[4] 유탄발사기
+    [2, 13, 1, [3, 3], 75, 100, 4, 0, 0, 72, 0, null, 0, null, false, 0, [255, 50, 192], 99, 3],        //[5] 화염방사기
+    [null, null, 1, [10, 10], 0, 180, 16, 0, 0, 0, 0, null, 0, null, false, 0, [255, 93, 93, 99, null]] //[6] 저격총(강화)
+];
+const BULLET_NAME = ["소총", "기관총", "저격총", "산탄총", "유탄발사기", "화염방사기"];
+const BULLET_DESCRIPTION = [
+    ["3점사 기능", "휼륭한 밸런스", "가벼운 무게(속도 +2)"],
+    ["빠른 공격속도", "낮은 정확도와 데미지", "조금 무거움(속도 -1)"],
+    ["적을 무한히 관통", "높은 데미지", "적당한 무게"],
+    ["12발 산탄", "적을 1번 관통", "무거움(속도 -2)"],
+    ["폭발하는 고속탄 발사", "강력한 데미지", "적당한 무게"],
+    ["적을 관통하는 화염", "낮은 데미지", "무거움(속도 -2)"]
+];
+const UPGRADE_NAME = ["치명타율", "치명피해", "추가피해", "최대체력", "체력회복"];
+const UPGRADE_DESCRIPTION = [
+    "모든 치명타율 증가", "모든 치명피해 증가", "모든 추가피해 증가", "최대 체력 증가", "체력 회복량 증가"
+];
+
+const BTN_CODE = [13, 37, 38, 39, 40, 65, 68, 83, 87];
+let keyState = [];
+document.addEventListener("keydown", function (e) {
+    keyState[e.keyCode] = true;
+});
+document.addEventListener("keyup", function (e) {
+    keyState[e.keyCode] = false;
+});
+let $screen = document.getElementById("screen");
+let $canvas = document.getElementById("canvas");
+$canvas.width = MAP_SIZE[0];
+$canvas.height = MAP_SIZE[1];
+let ctx = $canvas.getContext("2d");
+let mousePos = [];
+$canvas.addEventListener("mousemove", function (e) {
+    const mx = e.pageX - $canvas.offsetLeft;
+    const my = e.pageY - $canvas.offsetTop;
+    mousePos = [mx, my];
+});
+
+//////////////////////////////////////// Random, RGB color ////////////////////////////////////////
+function rand(...args) {
+    if (args.length === 1) {
+        const [n] = args;
+        return Math.random() * n;
+    }
+    if (args.length === 2) {
+        const [start, end] = args;
+        if (start > end) throw Error("Start value must be less than or equal to end value.");
+        return Math.random() * (end - start) + start;
+    }
+}
+
+function randInt(...args) {
+    if (args.length === 1) {
+        const [n] = args;
+        return Math.ceil(Math.random() * n);
+    }
+    if (args.length === 2) {
+        const [start, end] = args;
+        if (start > end) throw Error("Start value must be less than or equal to end value.");
+        return Math.ceil(Math.random() * (end - start)) + start;
+    }
+}
+
+function randBool() {
+    return Math.random() < 0.5;
+}
+
+function rgba(rgbColor, alpha = 1) {
+    return `rgba(${rgbColor[0]}, ${rgbColor[1]}, ${rgbColor[2]}, ${alpha})`;
+}
+
+//////////////////////////////////////// Game Manager ////////////////////////////////////////
+class ScorePack {
+    constructor(name, score, time) {
+        this.name = name;
+        this.score = score;
+        this.time = time;
+    }
+}
+class GameManager {
+    constructor() {
+        this.isRunning = false;
+        this.pauseMode = 0;
+        this.objectList = [];
+        this.player;
+        this.gameDateRate;
+        this.translate_absolute;
+        this.background_coord = [0, 0];
+        this. boxSelectedWeaponType;
+        this.isMouseInBox;
+        this.uiText = [];
+        this.totalLV = [0, 0, 0, 0, 0, 0];
+        this.upgradeLV;
+        this.boxWeponUgradeVal = [0, 0, 0];
+        this.enemyCount;
+        this.enemySponTime;
+        this.itemCount;
+        this.itemSponTime;
+        this.t;
+        this.t_pause;
+        this.reRoll;
+        this.score;
+        this.level;
+        this.exp;
+        this.exp_required;
+        this.levelpercent;
+        this.hp;
+        this.hpm;
+        this.hpRegen;
+        this.hpRegenCool;
+        this.hpRegenTime;
+        this.hardLevel;
+        this.hardLevel_required;
+        this.hardLevelpercent;
+        this.invincivle;
+        this.powerUp;
+        this.magnetic;
+        this.storage = window.localStorage;
+        this.scorePack = [new ScorePack(null, null, null), new ScorePack(null, null, null),new ScorePack(null, null, null)];
+    }
+    initialize() {
+        keyState = [];
+        this.objectList = [];
+        this.objectList.push(this.player);
+        this.t = 0;
+        this.t_pause = 0;
+        this.isMouseInBox = [false, false, false, false];
+        this.upgradeLV = [0, 0, 0, 0, 0];
+        this.translate_absolute = [0, 0];
+        this.background_coord = [0, 0];
+        this.gameDateRate = 0;
+        this.isRunning = true;
+        this.pauseMode = 0;
+        this.hardLevel = 1;
+        this.hardLevel_required = HARDLEVEL_RATE_START;
+        this.hardLevelpercent = 0;
+        this.score = 0;
+        this.level = 1;
+        this.exp = 0;
+        this.exp_required = EXP_RATE_START;
+        this.levelpercent = 0;
+        this.boxSelectedWeaponType = [0, 0, 0];
+        this.reRoll = 3;
+        this.enemyCount = 0;
+        this.enemySponTime = 0;
+        this.itemCount = 0;
+        this.itemSponTime = 0;
+        this.hpm = 50;
+        this.hp = this.hpm;
+        this.hpRegen = 5;
+        this.hpRegenTime = 0;
+        this.hpRegenCool = 10;
+        this.invincivle = 0;
+        this.powerUp = 0;
+        this.magnetic = 0;
+    }
+    gameStart() {
+        if (this.isRunning) return;
+        this.initialize();
+        this.player.initialize();
+        this.loadScore();
+
+        let startWeaponIndex = randInt(0, 6) - 1;
+        this.player.power[startWeaponIndex]++;
+        this.player.upgradeLV[startWeaponIndex][0]++;
+        this.changeWeapon(startWeaponIndex);
+    }
+    gameOver() {
+        this.isRunning = false;
+        this.pauseMode = 3;
+        this.saveScore();
+    }
+    update() {
+        if (this.t_pause < 60) this.t_pause++;
+        if (this.isRunning) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        } else {
+            if (this.pauseMode == 0) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                this.drawStartUI();
+            } else if (this.pauseMode == 2) this.drawLevelUpUI();
+            return;
+        }
+        this.update_before();
+        this.objectUpdate();
+        this.update_after();
+    }
+    update_before() {
+        this.gameDateRate += 1;
+        this.drawBackground();
+        this.checkPerSecond();
+        this.moveControl_before();
+    }
+    update_after() {
+        this.sponEnemy();
+        this.sponItem();
+        this.moveControl_after();
+        this.drawPlayerUI();
+        if (this.exp > this.exp_required) this.levelUp();
+        if (!this.isRunning && this.pauseMode == 3) this.drawGameOverUI();
+    }
+    objectUpdate() {
+        let objectListCopy = new Array();
+        this.objectList.forEach(o => objectListCopy.push(o));
+        for (let i = 0; i < objectListCopy.length; i++) objectListCopy[i].updateAll();
+    }
+    checkPerSecond() {
+        this.t++;
+        if (this.t > FPS) {
+            this.t = 0;
+            if (this.hp < this.hpm) {
+                this.hpRegenTime++;
+                if (this.hpRegenCool < this.hpRegenTime) {
+                    this.hpRegenTime = 0;
+                    this.hp += this.hpRegen;
+                    if (this.hp > this.hpm) this.hp = this.hpm;
+                }
+            }
+            if (this.hardLevel < 1 + Math.floor(this.gameDateRate / this.hardLevel_required)) {
+                if (this.hardLevel_required > HARDLEVEL_RATE_END) this.hardLevel_required--;
+                this.hardLevel++;
+                if (this.hardLevel % 4 == 0) this.createEnemy(1);
+                if (this.hardLevel % 20 == 0) this.createEnemy(100);
+            }
+            this.hardLevelpercent = Math.round((this.gameDateRate % this.hardLevel_required) / this.hardLevel_required * 1000) / 10;
+            this.levelpercent = Math.round(this.exp / this.exp_required * 1000) / 10;
+            if (this.invincivle > 0) this.initialize--;
+            if (this.magnetic > 0) this.magnetic--;
+            if (this.powerUp > 0) {
+                this.powerUp--;
+                if (this.powerUp == 0) this.changeWeapon(this.player.bulletType);
+            }
+        }
+    }
+    drawPlayerUI() {
+        let text;
+        let mouseAngle = Transform.calAngle(this.player.pos, mousePos);
+        let attackLineCoord = [this.player.pos[0] + Math.cos(mouseAngle) * MAP_SIZE[0], this.player.pos[1] + Math.sin(mouseAngle) * MAP_SIZE[0]];
+        Painter.drawDashLine('white', this.player.pos, attackLineCoord);
+        Painter.drawEmptyCircle(rgba([255, 255, 255], 0.5), 2, mousePos, 15, Math.PI * 2 * this.player.attackTime / this.player.attackCool);
+        Painter.drawEmptyCircle('white', 1, mousePos, 9, Math.PI * 2);
+        Painter.drawLine('white', 1, [mousePos[0] -21, mousePos[1]], [mousePos[0] +21, mousePos[1]]);
+        Painter.drawLine('white', 1, [mousePos[0], mousePos[1] -21], [mousePos[0], mousePos[1] +21]);
+
+        Painter.drawText('white', [6, 20], "SCORE: " + this.score, 16, "left");
+        Painter.drawText('grey', [6, 39], "시간: " + this.calTimerText(this.gameDateRate), 12, "left");
+        Painter.drawText('grey', [6, 55], this.hardLevel + "단계 (" + this.hardLevelpercent + "%)", 12, "left");
+
+        Painter.drawRect(rgba([83, 247, 60]), [MAP_SIZE[0] - 150 + 70 * this.hp / this.hpm, 20], [70 * this.hp / this.hpm, 9]);
+        Painter.drawEmptyRect('grey', 2, [MAP_SIZE[0] - 80, 20], [70, 9]);
+        Painter.drawText('white', [MAP_SIZE[0] - 80, 25], this.hp + "/" + this.hpm, 12, "center");
+
+        Painter.drawRect(rgba([85, 215, 255]), [MAP_SIZE[0] - 110 + 50 * this.levelpercent / 100, 48], [50 * this.levelpercent / 100, 9]);
+        Painter.drawEmptyRect('grey', 2, [MAP_SIZE[0] - 60, 48], [50, 9]);
+        Painter.drawText('white', [MAP_SIZE[0] - 100, 53], "LV." + this.level + " (" + this.levelpercent + "%)", 12, "left");
+
+        Painter.drawText('grey', [MAP_SIZE[0] - 11, 76], "공격력: " + this.uiText[1], 12, "right");
+        Painter.drawText('grey', [MAP_SIZE[0] - 11, 92], "공격속도: " + this.uiText[2] + "ms", 12, "right");
+        Painter.drawText('grey', [MAP_SIZE[0] - 11, 108], this.uiText[3], 12, "right");
+        Painter.drawText('grey', [MAP_SIZE[0] - 11, 124], "치명타율: " + this.player.criticalChance + "%", 12, "right");
+        Painter.drawText('grey', [MAP_SIZE[0] - 11, 140], "치명피해: " + this.player.criticalDamage + "%", 12, "right");
+        if (this.hp > this.hpm)
+            Painter.drawText('grey', [MAP_SIZE[0] - 11, 156], (this.hpRegenCool - this.hpRegenTime) + "이후 hp " + this.hpRegen + "회복...", 12, "right");
+
+        Painter.drawText('white', [MAP_SIZE[0] / 2, MAP_SIZE[1] - 54], "현재 사용중인 무기", 10, "center");
+        Painter.drawText(rgba(STAT_BULLET[this.player.bulletType][16]), [MAP_SIZE[0] / 2, MAP_SIZE[1] - 25], this.uiText[0], 16, "center");
+        Painter.drawEmptyRect('grey', 2, [MAP_SIZE[0] / 2, MAP_SIZE[1] - 40], [64, 30]);
+        
+        for (let i = 0; i < 3; i++) {
+            if (this.scorePack[i].score != null && this.scorePack[i].score != 'null')
+                Painter.drawText('grey', [MAP_SIZE[0] / 2, 16 + i * 16], this.calScoreText(i), 12, "center");
+        }
+
+        if (this.invincivle > 0)
+            Painter.drawLine(rgba([40, 246, 246]), 2, [this.player.pos[0] - 24, this.player.pos[1] - 28]
+                , [this.player.pos[0] - 22 + 44 * this.invincivle / 20, this.player.pos[1] - 28]);
+
+        if (this.powerUp > 0)
+            Painter.drawLine(rgba([255, 62, 62]), 2, [this.player.pos[0] - 24, this.player.pos[1] - 31]
+                , [this.player.pos[0] - 22 + 44 * this.powerUp / 15, this.player.pos[1] - 31]);
+
+        if (this.magnetic > 0)
+            Painter.drawLine(rgba([255, 242, 124]), 2, [this.player.pos[0] - 24, this.player.pos[1] - 34]
+                , [this.player.pos[0] - 22 + 44 * this.magnetic / 10, this.player.pos[1] - 34]);
+    }
+    drawStartUI() {
+        this.t++;
+        this.drawBackground();
+        Painter.drawText('white', [5, 18], "Version " + VERSION, 17, "left");
+        Painter.drawText('white', [MAP_SIZE[0] - 76, 18], "Copyright © 2026 Printed. All rights reserved.", "right");
+        Painter.drawText('white', [MAP_SIZE[0] / 2, MAP_SIZE[1] / 2 - 148], "최후방어사격", 48, "center");
+        if (this.t % 60 < 30) Painter.drawText('white', [MAP_SIZE[0] / 2, MAP_SIZE[1] / 2], "-Press Enter to Start-", 16, "center");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 104, MAP_SIZE[1] - 240], "1. Enter 키로 일시 정지", 12, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 104, MAP_SIZE[1] - 240 + 32], "2. 방향키 또는 WASD로 이동", 12, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 104, MAP_SIZE[1] - 240 + 64], "3. 마우스로 조준. 자동 공격", 12, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 104, MAP_SIZE[1] - 240 + 96], "4. LV업 마다 업그레이드 96", 12, "left");
+    }
+    drawPauseUI() {
+        Painter.drawRect(rgba([0, 0, 0], 0.6), [0, 0], MAP_SIZE);
+        Painter.drawText('white', [MAP_SIZE[0] / 2, 96], "SCORE: " + this.score, 48, "center");
+        Painter.drawText('white', [MAP_SIZE[0] / 2, 132], this.calTimerText(this.gameDateRate), 24, "center");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 64, 216], "◇ 최대체력 +" + this.upgradeLV[3] + "    [ " + this.hpm + " ]", 11, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 64, 240], "◇ 체력 회복량 +" + this.upgradeLV[4] + "    [ " + this.hpRegen + "/s ]", 11, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 64, 264], "◇ 모든 무기 추가피해 +" + this.upgradeLV[2] + "    [ " + this.player.power_total * 100 + "% ]", 11, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 64, 288], "◇ 모든 무기 치명타율 +" + this.upgradeLV[0] + "    [ " + this.player.criticalChance_total + "% ]", 11, "left");
+        Painter.drawText('white', [MAP_SIZE[0] / 2 - 64, 312], "◇ 모든 무기 치명피해 +" + this.upgradeLV[1] + "    [ " + (this.player.criticalDamage_total - 200) + "% ]", 11, "left");
+
+        let textCoord;
+        for (let i = 0; i < 6; i++) {
+            textCoord = [MAP_SIZE[0] / 2 - 64 - 223 + 228 * (i % 3), 360 + Math.floor(i / 3) * 180];
+            Painter.drawText(rgba(STAT_BULLET[i][16]), [textCoord[0], textCoord[1]], BULLET_NAME[i], 16, "left");
+            Painter.drawText('white', [textCoord[0], textCoord[1] + 32], "◇ 추가피해 +" + this.player.upgradeLV[i][0] 
+                + "    [ " + (this.player.power_total + this.player.power[i] - 1) * 100 + "% ]", 11, "left");
+            Painter.drawText('white', [textCoord[0], textCoord[1] + 56], "◈ 치명타율 +" + this.player.upgradeLV[i][3] 
+                + "    [ " + (this.player.criticalChance_total + 15 * this.player.upgradeLV[i][3]) + "% ]", 11, "left");
+            Painter.drawText('white', [textCoord[0], textCoord[1] + 80], "◈ 치명피해 +" + this.player.upgradeLV[i][4] 
+                + "    [ " + (this.player.criticalDamage_total + 25 * this.player.upgradeLV[i][4]) + "% ]", 11, "left");
+            Painter.drawText('white', [textCoord[0], textCoord[1] + 104], "◈ 공격속도 +" + this.player.upgradeLV[i][1] 
+                + "    [ " + (100 - this.player.attackSpeed[i]) + "% ]", 11, "left");
+            if (STAT_BULLET[i][14])
+                Painter.drawText('white', [textCoord[0], textCoord[1] + 128], "◈ 추가 탄 갯수 +" + this.player.upgradeLV[i][2] 
+                + "    [ " + this.player.bonusBullet[i] + "개 ]", 11, "left");
+            else
+                Painter.drawText('white', [textCoord[0], textCoord[1] + 128], "◈ 피해증폭 & 크기 +" + this.player.upgradeLV[i][2] 
+                + "    [ " + this.player.bonusBullet[i] + "% ]", 11, "left");
+        }
+    }
+    drawLevelUpUI() {
+        for (let i = 0; i < 3; i++) {
+            this.isMouseInBox[i] = (mousePos[0] > MAP_SIZE[0] / 2 - 352 + i * 256 && mousePos[0] < MAP_SIZE[0] / 2 - 160 + i * 256 
+                && mousePos[1] > MAP_SIZE[1] / 2 - 160 && mousePos[1] < MAP_SIZE[1] / 2 - 160) ? true : false;
+            if (this.boxWeponUgradeVal[i] == 0 || this.boxWeponUgradeVal[i] > 4)
+                Painter.drawEmptyRect(this.isMouseInBox[i] ? 'white' : 'grey', 4, [MAP_SIZE[0] / 2 - 256 + i * 256, MAP_SIZE[1] / 2], [96, 160]);
+            else {
+                Painter.drawEmptyRect(this.isMouseInBox[i] ? 'red' : rgba([112, 0, 0]), 4, [MAP_SIZE[0] / 2 - 256 + i * 256, MAP_SIZE[1] / 2], [96, 160]);
+                Painter.drawEmptyRect(this.isMouseInBox[i] ? 'red' : rgba([112, 0, 0]), 2, [MAP_SIZE[0] / 2 - 256 + i * 256, MAP_SIZE[1] / 2], [96, 154]);
+            }
+        }
+
+        this.isMouseInBox[3] = (mousePos[0] > MAP_SIZE[0] / 2 - 32 && mousePos[0] < MAP_SIZE[0] / 2 + 32
+            && mousePos[1] > MAP_SIZE[1] - 196 && mousePos[1] < MAP_SIZE[1] - 164) ? true : false;
+
+        Painter.drawRect(this.reRoll > 0 ? rgba([180, 180, 180]) : rgba([50, 50, 50]), [MAP_SIZE[0] / 2, MAP_SIZE[1] - 180], [32, 16]);
+
+        let reRollColor = this.isMouseInBox[3] ? 'white' : 'grey';
+        if (this.reRoll == 0) reRollColor = 'grey';
+        Painter.drawEmptyRect(reRollColor, 4, [MAP_SIZE[0] / 2, MAP_SIZE[1] - 180], [32, 16]);
+        Painter.drawText('white', [MAP_SIZE[0] / 2, MAP_SIZE[1] - 176], "+ " + this.reRoll, 12, "center");
+    }
+    drawGameOverUI() {
+        Painter.drawRect(rgba([255, 0, 0], 0.05), [0, 0], MAP_SIZE);
+        this.drawPauseUI();
+        Painter.drawEmptyRect('red', 10, [MAP_SIZE[0] / 2, MAP_SIZE[1] / 2], [MAP_SIZE[0] / 2, MAP_SIZE[1] / 2]);
+        Painter.drawText('red', [MAP_SIZE[0] / 2, MAP_SIZE[1] - 48], "You Die...", 16, "center");
+    }
+    drawBackground() {
+        for (let col = 0; col < MAP_LINE[0]; col++)
+            Painter.drawRect(COLOR_BACK, [col * MAP_BACKSIZE + this.background_coord[0], MAP_SIZE[1] / 2], [1, MAP_SIZE[1]]);
+        
+        for (let row = 0; row < MAP_LINE[0]; row++)
+            Painter.drawRect(COLOR_BACK, [MAP_SIZE[0] / 2, row * MAP_BACKSIZE + this.background_coord[1]], [MAP_SIZE[0], 1]);
+    }
+    moveControl_before() {
+        if (this.translate_absolute[0] != 0 && this.translate_absolute[1]) {
+            this.translate_absolute[0] *= CROSSMOVE_MUL;
+            this.translate_absolute[1] *= CROSSMOVE_MUL;
+        }
+    }
+    moveControl_after() {
+        for (let i = 0; i < 2; i++) {
+            if (this.translate_absolute[i] != 0) {
+                this.background_coord[i] += this.translate_absolute[i];
+
+                if (this.background_coord[i] > MAP_BACKSIZE) this.background_coord[i] -= MAP_BACKSIZE;
+                else if (this.background_coord[i] < 0) this.background_coord[i] += MAP_BACKSIZE;
+
+                this.translate_absolute[i] = 0;
+            }
+        }
+    }
+    movePlayer(coord_type, offset) {
+        this.translate_absolute[coord_type] = offset * Math.floor(this.player.moveSpeed);
+    }
+    getDamage(damage) {
+        this.hp -= damage;
+
+        if (this.hp < 1) {
+            this.hp = 0;
+            this.gameOver();
+            return;
+        }
+
+        this.hpRegenTime = 0;
+        this.invincivle = 3;
+    }
+    levelUp() {
+        this.exp -= this.exp_required;
+        this.exp_required = Math.round(this.exp_required * EXP_REQUIRED_MUL + this.level * EXP_RATE_START / 10);
+        this.level++;
+        this.isRunning = false;
+        this.pauseMode = 2;
+        if (this.invincivle < 3) this.invincivle = 3;
+        if (this.level % 2 == 0 && this.reRoll < 3) this.reRoll++;
+
+        Painter.drawRect(rgba([0, 0, 0], 0.6), [0, 0], MAP_SIZE);
+        Painter.drawText('white', [MAP_SIZE[0] / 2, 128], "LV UP", 64, "center");
+        Painter.drawText('white', [MAP_SIZE[0] / 2, MAP_SIZE[1] - 100], "* 2레벨 업 마다 다시뽑기 기회 1회 획득. 최대 3개까지 저장 가능", 14, "center");
+        Painter.drawText('white', [MAP_SIZE[0] / 2, MAP_SIZE[1] - 75], "* 20% 확률로 특수 업그레이드 등장", 14, "center");
+
+        this.setCardDeck();
+    }
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        </script>
+    </body>
+</html>
